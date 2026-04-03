@@ -38,6 +38,10 @@ class MainWindow(QMainWindow):
         self._canvas = GraphCanvas(self._graph, self)
         self.setCentralWidget(self._canvas)
 
+        # Add the pre-existing start node to the canvas
+        start_node = self._graph.nodes[self._graph.start_node_id]
+        self._canvas.add_node_item(start_node)
+
         # ---- Toolbar ---------------------------------------------------
         self._build_toolbar()
 
@@ -242,13 +246,9 @@ class MainWindow(QMainWindow):
         if self._traverser and self._traverser.isRunning():
             return
 
-        # Find start node: selected node or first node
-        start_id: Optional[str] = self._selected_node_id
+        start_id = self._graph.start_node_id
         if start_id is None:
-            node = self._graph.first_node()
-            if node is None:
-                return
-            start_id = node.id
+            return
 
         self._traverser = Traverser(
             self._graph, self._player, start_id, parent=self

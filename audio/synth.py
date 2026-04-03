@@ -88,6 +88,6 @@ def generate_percussive(freq: float) -> np.ndarray:
         return np.zeros(n, dtype=np.float32)
 
     t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
-    envelope = np.exp(-PERC_DECAY * t).astype(np.float32)
+    envelope = np.exp(-PERC_DECAY * t).astype(np.float32) # we could add t* to change attack
     wave = np.sin(2.0 * np.pi * freq * t).astype(np.float32)
     return wave * envelope

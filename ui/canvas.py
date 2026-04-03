@@ -35,6 +35,7 @@ NODE_RADIUS = 16.0
 NODE_COLOR = QColor("#e8e8e8")
 NODE_BORDER_COLOR = QColor("#555555")
 NODE_SELECTED_COLOR = QColor("#ffd700")
+NODE_START_COLOR = QColor("#50c878")   # green fill for start node
 NODE_PORT_RADIUS = 6.0
 NODE_PORT_COLOR = QColor("#4a90d9")
 
@@ -74,9 +75,16 @@ class NodeItem(QGraphicsEllipseItem):
 
     # ------------------------------------------------------------------
     def _update_appearance(self) -> None:
-        color = NODE_SELECTED_COLOR if self.isSelected() else NODE_COLOR
+        is_start = (self.canvas._graph.start_node_id == self.node.id)
+        if self.isSelected():
+            color = NODE_SELECTED_COLOR
+        elif is_start:
+            color = NODE_START_COLOR
+        else:
+            color = NODE_COLOR
         self.setBrush(color)
-        self.setPen(QPen(NODE_BORDER_COLOR, 2.0))
+        pen_width = 3.5 if is_start else 2.0
+        self.setPen(QPen(NODE_BORDER_COLOR, pen_width))
 
     # ------------------------------------------------------------------
     def itemChange(self, change, value):
@@ -207,10 +215,11 @@ class EdgeItem(QGraphicsPathItem):
 
         self.setPath(path)
 
-        # Update handle to midpoint of path without triggering handle_moved
+        # Place handle at the analytic arc sagitta point, not path.pointAtPercent(0.5)
+        # (the path includes arrowhead segments which would shift the 50% point off the arc).
         self._repositioning_handle = True
-        mid = path.pointAtPercent(0.5)
-        self.handle.setPos(mid)
+        hx, hy = _sagitta_point(src, dst, self.edge, self.graph)
+        self.handle.setPos(QPointF(hx, hy))
         self._repositioning_handle = False
 
         # Highlight selected state
@@ -232,30 +241,44 @@ class EdgeItem(QGraphicsPathItem):
         dx, dy = dst_node.x, dst_node.y
         hx, hy = handle_pos.x(), handle_pos.y()
 
-        # Determine which side of the chord the handle is on
-        # Cross product of chord vector with (handle - src)
         chord_x, chord_y = dx - sx, dy - sy
-        h_x, h_y = hx - sx, hy - sy
-        cross = chord_x * h_y - chord_y * h_x
-        arc_side = "left" if cross > 0 else "right"
-
-        # Distance from handle to the chord midpoint
-        mx, my = (sx + dx) / 2.0, (sy + dy) / 2.0
-        d = math.hypot(hx - mx, hy - my)
         chord_len = math.hypot(chord_x, chord_y)
 
-        if d < 2.0 or chord_len < 2.0:
-            # Snap to straight
+        if chord_len < 2.0:
+            return
+
+        # Signed perpendicular distance from handle to the chord LINE.
+        # Used only to determine which side the arc bows to and for snap detection.
+        cross = chord_x * (hy - sy) - chord_y * (hx - sx)
+        sagitta_signed = cross / chord_len
+        # In Qt screen coords (y-down), the cross product is negative when the
+        # handle is visually *above* the chord — but that is the "left" side
+        # (left of the src→dst travel direction). Flip the sign accordingly.
+        arc_side = "left" if sagitta_signed < 0 else "right"
+
+        SNAP_THRESHOLD = 10.0  # px — width of dead zone around chord line → straight
+        if abs(sagitta_signed) < SNAP_THRESHOLD:
             edge.shape = "straight"
             edge.radius = float("inf")
         else:
-            # r = (d² + (c/2)²) / (2d)
-            half_chord = chord_len / 2.0
-            r = (d ** 2 + half_chord ** 2) / (2.0 * d)
-            r = max(r, MIN_ARC_RADIUS)
-            edge.shape = "arc"
-            edge.radius = r
-            edge.arc_side = arc_side
+            # Use the circumradius of the triangle (src, handle, dst).
+            # R = (a * b * c) / (4 * area)
+            # This is correct regardless of where the handle sits relative to the
+            # perpendicular bisector, so the radius tracks the handle monotonically
+            # as it moves toward or away from the chord.
+            a = math.hypot(hx - dx, hy - dy)  # handle → dst
+            b = chord_len                       # src → dst
+            c = math.hypot(hx - sx, hy - sy)  # src → handle
+            area = abs(cross) / 2.0            # |cross| = chord_len * |sagitta|
+            if area < 1e-6:
+                edge.shape = "straight"
+                edge.radius = float("inf")
+            else:
+                r = (a * b * c) / (4.0 * area)
+                r = max(r, MIN_ARC_RADIUS)
+                edge.shape = "arc"
+                edge.radius = r
+                edge.arc_side = arc_side
 
         self.redraw()
         self.canvas.edge_changed.emit(edge.id)
@@ -352,6 +375,9 @@ class GraphCanvas(QGraphicsView):
     def remove_selected(self) -> None:
         for item in self._scene.selectedItems():
             if isinstance(item, NodeItem):
+                # The start node cannot be deleted
+                if item.node.id == self._graph.start_node_id:
+                    continue
                 self._graph.remove_node(item.node.id)
                 # Also remove connected EdgeItems
                 for eid, ei in list(self._edge_items.items()):
@@ -472,6 +498,28 @@ class GraphCanvas(QGraphicsView):
 # Drawing helpers
 # ===========================================================================
 
+def _sagitta_point(src: Node, dst: Node, edge: Edge, graph: Graph):
+    """Return the midpoint of the arc (the sagitta point) as (x, y).
+
+    For a circular arc the sagitta point lies on the perpendicular bisector of
+    the chord, at distance R from the center, on the same side as the arc.
+    Formula: S = C + R * normalize(M - C)
+    where M is the chord midpoint and C is the arc center.
+    """
+    mx, my = (src.x + dst.x) / 2.0, (src.y + dst.y) / 2.0
+    if edge.shape == "straight" or math.isinf(edge.radius):
+        return (mx, my)
+    center = edge.arc_center(graph)
+    if center is None:
+        return (mx, my)
+    cx, cy = center
+    dcx, dcy = mx - cx, my - cy
+    dist = math.hypot(dcx, dcy)
+    if dist < 1e-6:
+        return (mx, my)
+    r = edge.radius
+    return (cx + r * dcx / dist, cy + r * dcy / dist)
+
 def _draw_straight(path: QPainterPath, src: Node, dst: Node) -> None:
     path.moveTo(src.x, src.y)
     path.lineTo(dst.x, dst.y)
@@ -529,16 +577,20 @@ def _draw_arc(
     src_angle = math.degrees(math.atan2(-(src.y - cy), src.x - cx))
     dst_angle = math.degrees(math.atan2(-(dst.y - cy), dst.x - cx))
 
-    # Span: choose direction based on arc_side
+    # Span: choose direction based on arc_side.
+    # In Qt screen coords (y-down), the _arc_center for "left" places the center
+    # *below* the chord, so the arc bows *above* it. arcTo with a negative span
+    # sweeps CW, which is the short path passing through the top. "right" is the
+    # mirror: center above, arc bows below, positive (CCW) span is the short path.
     span = dst_angle - src_angle
     if edge.arc_side == "left":
-        # CCW arc in Qt coord system means positive span
-        if span <= 0:
-            span += 360
-    else:
-        # CW arc means negative span
+        # CW sweep (negative span) bows above/left
         if span >= 0:
             span -= 360
+    else:
+        # CCW sweep (positive span) bows below/right
+        if span <= 0:
+            span += 360
 
     path.arcMoveTo(rect, src_angle)
     path.arcTo(rect, src_angle, span)

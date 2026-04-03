@@ -162,6 +162,11 @@ class Graph:
         # reverse: dst_id -> list of edge ids (incoming)
         self._incoming: Dict[str, List[str]] = {}
 
+        # The start node is created once at construction and cannot be removed.
+        start = Node.new(0.0, 0.0)
+        self.start_node_id: str = start.id
+        self.add_node(start)
+
     # ------------------------------------------------------------------
     def add_node(self, node: Node) -> Node:
         self.nodes[node.id] = node
@@ -170,6 +175,9 @@ class Graph:
         return node
 
     def remove_node(self, node_id: str) -> None:
+        # The start node is permanent.
+        if node_id == self.start_node_id:
+            return
         # remove all connected edges first
         for eid in list(self._outgoing.get(node_id, [])):
             self.remove_edge(eid)
