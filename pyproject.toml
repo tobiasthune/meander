@@ -1,0 +1,17 @@
+[project]
+name = "meander"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=2.0.2",
+    "pyqt6>=6.10.2",
+    "scipy>=1.13.1",
+    "sounddevice>=0.5.5",
+]
+
+[tool.uv.workspace]
+members = [
+    "3.11",
+]
