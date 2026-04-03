@@ -17,9 +17,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from audio.player import AudioPlayer
-from audio.traversal import Traverser
+from audio.compiler import compile_traversal
+from audio.player import CompiledPlayer
 from graph.graph import Edge, Graph, Node
+from graph.serializer import to_dict
 from ui.canvas import GraphCanvas
 
 
@@ -31,8 +32,9 @@ class MainWindow(QMainWindow):
 
         # ---- Data model ------------------------------------------------
         self._graph = Graph()
-        self._player = AudioPlayer()
-        self._traverser: Optional[Traverser] = None
+        self._player = CompiledPlayer(self)
+        self._player.event_triggered.connect(self._on_playback_event)
+        self._player.finished.connect(self._on_playback_finished)
 
         # ---- Canvas ----------------------------------------------------
         self._canvas = GraphCanvas(self._graph, self)
@@ -53,7 +55,7 @@ class MainWindow(QMainWindow):
         self._canvas.edge_changed.connect(self._on_edge_changed)
         self._canvas.node_selected.connect(self._on_node_selected)
 
-        # ---- State ------------------------------------------------
+        # ---- State -----------------------------------------------------
         self._selected_edge_id: Optional[str] = None
         self._selected_node_id: Optional[str] = None
 
@@ -243,31 +245,29 @@ class MainWindow(QMainWindow):
     # ==================================================================
 
     def _on_play(self) -> None:
-        if self._traverser and self._traverser.isRunning():
+        if self._player.is_playing():
             return
-
-        start_id = self._graph.start_node_id
-        if start_id is None:
+        compiled = compile_traversal(to_dict(self._graph))
+        if compiled.duration == 0.0:
             return
-
-        self._traverser = Traverser(
-            self._graph, self._player, start_id, parent=self
-        )
-        self._traverser.finished.connect(self._on_traversal_finished)
-        self._traverser.node_entered.connect(self._canvas.highlight_node)
-        self._traverser.edge_started.connect(self._canvas.highlight_edge)
-        self._traverser.start()
-
+        self._player.play(compiled)
         self._play_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
 
     def _on_stop(self) -> None:
-        if self._traverser:
-            self._traverser.stop_traversal()
+        self._player.stop()
+        self._on_playback_finished()
 
-    def _on_traversal_finished(self) -> None:
+    def _on_playback_event(self, kind: str, item_id: str) -> None:
+        if kind == "edge":
+            self._canvas.highlight_edge(item_id)
+        elif kind == "node":
+            self._canvas.highlight_node(item_id)
+
+    def _on_playback_finished(self) -> None:
         self._play_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
+        self._canvas.clear_highlights()
 
 
 MIN_ARC_RADIUS_UI = 30.0

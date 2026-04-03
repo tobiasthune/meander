@@ -1,60 +1,84 @@
-"""Non-blocking audio player wrapping sounddevice.
+"""CompiledPlayer — plays a CompiledPlayback with a synchronised visual event clock.
+
+The audio buffer is handed to sounddevice in one go (non-blocking).
+A QTimer polls at ~16 ms intervals, checks wall-clock elapsed time against the
+event list, and emits event_triggered for any events that have come due.
+This gives canvas highlights that stay in sync with the audio without any
+inter-thread communication or blocking calls.
 
 Usage
 -----
-    player = AudioPlayer()
-    player.play(samples)   # queues samples; returns immediately
-    player.stop()          # cancels any ongoing playback
+    player = CompiledPlayer(parent)
+    player.event_triggered.connect(lambda kind, id: ...)
+    player.finished.connect(on_done)
+    player.play(compiled_playback)
+    # ...
+    player.stop()
 """
 from __future__ import annotations
 
-import threading
+import time
+from typing import Optional
 
-import numpy as np
 import sounddevice as sd
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from audio.synth import SAMPLE_RATE
+from audio.compiler import CompiledPlayback
 
 
-class AudioPlayer:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._stream: sd.OutputStream | None = None
+class CompiledPlayer(QObject):
+    # Fired on the main thread when a timed event becomes due.
+    # Args: kind ("edge" | "node"), item id (str)
+    event_triggered = pyqtSignal(str, str)
+    finished = pyqtSignal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._compiled: Optional[CompiledPlayback] = None
+        self._start_time: float = 0.0
+        self._event_idx: int = 0
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)          # ~60 fps
+        self._timer.timeout.connect(self._tick)
 
     # ------------------------------------------------------------------
-    def play(self, samples: np.ndarray) -> None:
-        """Play *samples* (float32, mono) without blocking."""
+    def play(self, compiled: CompiledPlayback) -> None:
         self.stop()
-        data = np.asarray(samples, dtype=np.float32)
-        if data.ndim == 1:
-            data = data.reshape(-1, 1)
-
-        with self._lock:
-            self._stream = sd.OutputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-            )
-            self._stream.start()
-            self._stream.write(data)
-
-    def play_blocking(self, samples: np.ndarray) -> None:
-        """Play *samples* and block until playback finishes.
-
-        Called from the traversal thread.
-        """
-        data = np.asarray(samples, dtype=np.float32)
-        sd.play(data, samplerate=SAMPLE_RATE)
-        sd.wait()
+        self._compiled = compiled
+        self._event_idx = 0
+        sd.play(compiled.audio, samplerate=compiled.sample_rate)
+        self._start_time = time.perf_counter()
+        self._timer.start()
 
     def stop(self) -> None:
-        """Stop and close any current stream."""
-        with self._lock:
-            if self._stream is not None:
-                try:
-                    sd.stop()
-                    self._stream.stop(ignore_errors=True)
-                    self._stream.close(ignore_errors=True)
-                except Exception:
-                    pass
-                self._stream = None
+        self._timer.stop()
+        sd.stop()
+        self._compiled = None
+
+    def is_playing(self) -> bool:
+        return self._timer.isActive()
+
+    # ------------------------------------------------------------------
+    def _tick(self) -> None:
+        if self._compiled is None:
+            self._timer.stop()
+            return
+
+        elapsed = time.perf_counter() - self._start_time
+        events = self._compiled.events
+
+        while (
+            self._event_idx < len(events)
+            and events[self._event_idx]["t"] <= elapsed
+        ):
+            e = events[self._event_idx]
+            self.event_triggered.emit(e["kind"], e["id"])
+            self._event_idx += 1
+
+        # Stop once the full duration + 1 s tail has elapsed
+        if elapsed >= self._compiled.duration + 1.0:
+            self._timer.stop()
+            self._compiled = None
+            self.finished.emit()
+

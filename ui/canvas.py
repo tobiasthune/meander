@@ -397,13 +397,23 @@ class GraphCanvas(QGraphicsView):
                 ei.redraw()
 
     def highlight_node(self, node_id: str) -> None:
-        for nid, ni in self._node_items.items():
-            ni.setBrush(NODE_SELECTED_COLOR if nid == node_id else NODE_COLOR)
+        for ni in self._node_items.values():
+            ni._update_appearance()
+        if node_id in self._node_items:
+            self._node_items[node_id].setBrush(NODE_SELECTED_COLOR)
 
     def highlight_edge(self, edge_id: str) -> None:
         for eid, ei in self._edge_items.items():
             pen = ei.pen()
             pen.setColor(EDGE_SELECTED_COLOR if eid == edge_id else EDGE_COLOR)
+            ei.setPen(pen)
+
+    def clear_highlights(self) -> None:
+        for ni in self._node_items.values():
+            ni._update_appearance()
+        for ei in self._edge_items.values():
+            pen = ei.pen()
+            pen.setColor(EDGE_COLOR)
             ei.setPen(pen)
 
     # ------------------------------------------------------------------

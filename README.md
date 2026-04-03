@@ -28,13 +28,15 @@ uv run main.py
 
 ### Building the graph
 
+A green node is fixed at the origin and always acts as the traversal start point. It cannot be deleted.
+
 | Action | Result |
 |---|---|
 | Double-click on empty canvas | Create a new node |
 | Drag from the **border** of a node to another node | Create a directed edge (starts straight/silent) |
 | Drag the **red midpoint handle** on an edge | Bow the edge into an arc; radius and pitch update live |
 | Click a node or edge | Select it |
-| Delete / Backspace | Remove the selected node or edge |
+| Delete / Backspace | Remove the selected node or edge (start node is protected) |
 | Scroll wheel | Zoom in / out |
 
 ### Properties panel (right side)
@@ -48,26 +50,47 @@ When an edge is selected:
 
 ### Playback
 
-1. Optionally click a node to select it as the start point (otherwise the first node added is used).
-2. Press **▶ Play** — the traversal thread walks the graph, playing each edge's sustained tone and each node's percussive hit in sequence.
-3. Press **⏹ Stop** to interrupt at any time.
+Press **▶ Play** to compile and play back the graph. Press **⏹ Stop** to interrupt.
 
-Traversal follows the first outgoing edge at each node and stops at a dead end.
+Traversal always starts from the fixed start node, follows the first outgoing edge at each node, and stops at a dead end or if a cycle is detected. Canvas highlights stay in sync with the audio via a global clock.
+
+#### How playback works internally
+
+1. **Compile** — the graph is serialised to a plain dict snapshot, then `compile_traversal()` walks it, synthesising every edge tone and node hit into a single mixed NumPy buffer, and building a timestamped event list.
+2. **Play** — `sd.play()` sends the buffer to the audio device in one call. A 16 ms `QTimer` compares elapsed wall-clock time (`time.perf_counter`) against the event list and fires canvas highlights as each event comes due.
+
+This means the audio and the visual animation are compiled independently and driven by the same clock, with no inter-thread communication during playback.
 
 ## Project structure
 
 ```
 meander/
-  main.py               — entry point
+  main.py                  — entry point
   graph/
-    graph.py            — Node, Edge, Graph data model + arc geometry
+    graph.py               — Node, Edge, Graph data model + arc geometry
+    serializer.py          — to_dict / from_dict (plain Python dict schema)
   audio/
-    synth.py            — sine tone and percussive synthesis; frequency mappings
-    player.py           — sounddevice wrapper
-    traversal.py        — QThread-based graph traversal with audio playback
+    synth.py               — sine tone and percussive synthesis; frequency mappings
+    compiler.py            — compile_traversal() → CompiledPlayback (audio buffer + event list)
+    player.py              — CompiledPlayer: sd.play() + QTimer event clock
   ui/
-    canvas.py           — interactive QGraphicsView canvas
-    main_window.py      — main window, toolbar, properties dock
+    canvas.py              — interactive QGraphicsView canvas
+    main_window.py         — main window, toolbar, properties dock
+```
+
+### Graph dict schema
+
+```python
+{
+    "start_node_id": str,
+    "nodes":   { "<id>": {"id": str, "x": float, "y": float}, ... },
+    "edges":   { "<id>": {"id": str, "src": str, "dst": str,
+                           "shape": "straight"|"arc",
+                           "radius": float,        # inf for straight
+                           "arc_side": "left"|"right",
+                           "length": float|None }, ... },
+    "outgoing": { "<node_id>": ["<edge_id>", ...], ... },
+}
 ```
 
 ## Dependencies

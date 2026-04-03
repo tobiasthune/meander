@@ -1,4 +1,6 @@
-"""Graph traversal with audio playback.
+# Replaced by audio/compiler.py + audio/player.py.
+# Kept as an empty module to avoid breaking any external imports.
+
 
 The Traverser walks a Graph starting from a given node, playing:
   - A sustained tone for each edge (frequency from radius, duration from arc length)
