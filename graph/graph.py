@@ -292,6 +292,8 @@ def _arc_tangent_at_end(
     else:
         tx, ty = -ry / r, rx / r
     dx, dy = x2 - x1, y2 - y1
-    if tx * dx + ty * dy < 0:
+    # Use <= 0 so that the degenerate semicircle case (dot == 0 exactly,
+    # because the dst radius is parallel to the chord) is also flipped.
+    if tx * dx + ty * dy <= 0:
         tx, ty = -tx, -ty
     return (tx, ty)

@@ -16,11 +16,12 @@ import math
 from typing import Dict, Optional
 
 from PyQt6.QtCore import QPointF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
+    QGraphicsPolygonItem,
     QGraphicsScene,
     QGraphicsView,
 )
@@ -48,7 +49,12 @@ HANDLE_COLOR = QColor("#e04040")
 
 RUBBER_BAND_COLOR = QColor("#4a90d9")
 
-ARROW_SIZE = 10.0
+# Arrow handle polygon (pointing along +x in local space)
+_HANDLE_ARROW = QPolygonF([
+    QPointF(10.0,  0.0),   # tip
+    QPointF(-6.0,  7.0),   # base left
+    QPointF(-6.0, -7.0),   # base right
+])
 
 
 # ===========================================================================
@@ -139,13 +145,12 @@ class NodeItem(QGraphicsEllipseItem):
 
 
 # ===========================================================================
-# MidpointHandle  (small draggable circle on each EdgeItem)
+# MidpointHandle  (directional arrow draggable on each EdgeItem)
 # ===========================================================================
 
-class MidpointHandle(QGraphicsEllipseItem):
+class MidpointHandle(QGraphicsPolygonItem):
     def __init__(self, edge_item: "EdgeItem") -> None:
-        r = HANDLE_RADIUS
-        super().__init__(-r, -r, 2 * r, 2 * r)
+        super().__init__(_HANDLE_ARROW)
         self.edge_item = edge_item
         self.setBrush(HANDLE_COLOR)
         self.setPen(QPen(Qt.GlobalColor.white, 1.5))
@@ -219,11 +224,12 @@ class EdgeItem(QGraphicsPathItem):
 
         self.setPath(path)
 
-        # Place handle at the analytic arc sagitta point, not path.pointAtPercent(0.5)
-        # (the path includes arrowhead segments which would shift the 50% point off the arc).
+        # Place handle at sagitta point and orient it along the travel direction
         self._repositioning_handle = True
         hx, hy = _sagitta_point(src, dst, self.edge, self.graph)
         self.handle.setPos(QPointF(hx, hy))
+        tx, ty = _midpoint_tangent(src, dst, self.edge, self.graph)
+        self.handle.setRotation(math.degrees(math.atan2(ty, tx)))
         self._repositioning_handle = False
 
         # Highlight selected state
@@ -536,34 +542,6 @@ def _sagitta_point(src: Node, dst: Node, edge: Edge, graph: Graph):
 def _draw_straight(path: QPainterPath, src: Node, dst: Node) -> None:
     path.moveTo(src.x, src.y)
     path.lineTo(dst.x, dst.y)
-    _add_arrowhead(path, src.x, src.y, dst.x, dst.y)
-
-
-def _add_arrowhead(
-    path: QPainterPath,
-    sx: float, sy: float,
-    dx: float, dy: float,
-) -> None:
-    chord = math.hypot(dx - sx, dy - sy)
-    if chord < 1e-6:
-        return
-    ux, uy = (dx - sx) / chord, (dy - sy) / chord
-    # Pull back from node border
-    tip_x = dx - ux * NODE_RADIUS
-    tip_y = dy - uy * NODE_RADIUS
-
-    perp_x, perp_y = -uy, ux
-    size = ARROW_SIZE
-    path.moveTo(tip_x, tip_y)
-    path.lineTo(
-        tip_x - ux * size + perp_x * size * 0.4,
-        tip_y - uy * size + perp_y * size * 0.4,
-    )
-    path.moveTo(tip_x, tip_y)
-    path.lineTo(
-        tip_x - ux * size - perp_x * size * 0.4,
-        tip_y - uy * size - perp_y * size * 0.4,
-    )
 
 
 def _draw_arc(
@@ -608,21 +586,36 @@ def _draw_arc(
     path.arcMoveTo(rect, src_angle)
     path.arcTo(rect, src_angle, span)
 
-    # Arrowhead at dst endpoint
-    # Compute tangent at dst numerically
-    tang = edge.tangent_at_dst(graph)
-    tip_x = dst.x - tang[0] * NODE_RADIUS
-    tip_y = dst.y - tang[1] * NODE_RADIUS
-    ux, uy = tang
-    perp_x, perp_y = -uy, ux
-    size = ARROW_SIZE
-    path.moveTo(tip_x, tip_y)
-    path.lineTo(
-        tip_x - ux * size + perp_x * size * 0.4,
-        tip_y - uy * size + perp_y * size * 0.4,
-    )
-    path.moveTo(tip_x, tip_y)
-    path.lineTo(
-        tip_x - ux * size - perp_x * size * 0.4,
-        tip_y - uy * size - perp_y * size * 0.4,
-    )
+
+def _midpoint_tangent(src: Node, dst: Node, edge: Edge, graph: Graph) -> tuple:
+    """Unit tangent vector in the direction of travel at the arc/chord midpoint."""
+    if edge.curvature <= 0.0:
+        # Straight: tangent is the chord direction
+        dx, dy = dst.x - src.x, dst.y - src.y
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            return (1.0, 0.0)
+        return (dx / d, dy / d)
+    center = edge.arc_center(graph)
+    if center is None:
+        dx, dy = dst.x - src.x, dst.y - src.y
+        d = math.hypot(dx, dy)
+        return (dx / d, dy / d) if d > 1e-6 else (1.0, 0.0)
+    cx, cy = center
+    hx, hy = _sagitta_point(src, dst, edge, graph)
+    rx, ry = hx - cx, hy - cy
+    r = math.hypot(rx, ry)
+    if r < 1e-6:
+        dx, dy = dst.x - src.x, dst.y - src.y
+        d = math.hypot(dx, dy)
+        return (dx / d, dy / d) if d > 1e-6 else (1.0, 0.0)
+    # Tangent perpendicular to radius, in the direction of arc travel
+    if edge.arc_side == "left":
+        tx, ty = ry / r, -rx / r   # CW sweep
+    else:
+        tx, ty = -ry / r, rx / r   # CCW sweep
+    # Ensure it points generally src→dst
+    dx, dy = dst.x - src.x, dst.y - src.y
+    if tx * dx + ty * dy < 0:
+        tx, ty = -tx, -ty
+    return (tx, ty)
