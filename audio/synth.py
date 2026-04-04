@@ -48,12 +48,12 @@ def freq_from_curvature(curvature: float) -> float:
 def freq_from_angle(angle_rad: float) -> float:
     """Map inter-edge angle (radians) to percussive frequency (Hz).
 
-    angle_rad is the angle between the arriving tangent reversed and the
-    departing tangent, i.e. the turning angle at the node.
+    angle_rad is the angle between the arriving chord reversed and the
+    departing chord, i.e. the turning angle at the node.
     0 = fully acute (max freq), π = straight through (silent).
     """
     angle_rad = max(0.0, min(math.pi, angle_rad))
-    return PERC_MAX_FREQ * (math.pi - angle_rad) / math.pi
+    return PERC_MAX_FREQ * angle_rad / math.pi #PERC_MAX_FREQ * (math.pi - angle_rad) / math.pi
 
 
 # ---------------------------------------------------------------------------
