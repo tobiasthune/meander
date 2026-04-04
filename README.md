@@ -5,15 +5,17 @@ Music generation through paths. Curves and angles define sounds.
 
 Meander is an experimental sound editor where music is described as a directed graph. There are no notes in the traditional sense — the geometry of the graph *is* the composition.
 
-- **Edges are sustained tones.** A circular arc edge plays a sine tone. The arc's radius determines pitch (smaller radius = higher frequency), and the arc length determines duration. A straight edge is silent.
-- **Nodes are percussive hits.** When traversal arrives at a node, the angle between the incoming and outgoing edges determines the pitch of a short percussive strike. A straight-through angle (180°) is silent; a sharper turn produces a higher-pitched hit.
+- **Edges are sustained tones.** A circular arc edge plays a sine tone. The arc's *curvature angle* determines pitch (higher curvature = higher frequency), and the straight-line distance between the connected nodes determines duration. A straight edge is silent.
+- **Nodes are percussive hits.** When traversal arrives at a node, the angle between the incoming and outgoing chord directions determines the pitch of a short percussive strike. A straight-through angle (180°) is silent; a sharper turn produces a higher-pitched hit.
 
 ### Frequency mapping
 
 | Parameter | Sound | Frequency formula |
 |---|---|---|
-| Arc radius | Sustained tone | `f = 44000 / radius` (radius 100 px → A4 = 440 Hz) |
+| Curvature θ ∈ [0°, 180°] | Sustained tone | `f = 44000 × sin(θ/2) / 100` (semicircle = A4 = 440 Hz) |
 | Turn angle θ | Percussive hit | `f = 4000 × (π − θ) / π` (straight = silent, acute = up to 4 kHz) |
+
+The curvature angle is the angle of the circle segment: 0° = straight line, 180° = semicircle. Because the radius is derived from the curvature and the chord length, moving nodes apart scales the arc shape without changing the pitch.
 
 ## Running
 
@@ -34,18 +36,20 @@ A green node is fixed at the origin and always acts as the traversal start point
 |---|---|
 | Double-click on empty canvas | Create a new node |
 | Drag from the **border** of a node to another node | Create a directed edge (starts straight/silent) |
-| Drag the **red midpoint handle** on an edge | Bow the edge into an arc; radius and pitch update live |
+| Drag the **red arrow handle** on an edge | Bow the edge into an arc; curvature and pitch update live. The arrow points in the direction of travel. |
 | Click a node or edge | Select it |
 | Delete / Backspace | Remove the selected node or edge (start node is protected) |
 | Scroll wheel | Zoom in / out |
+
+The handle snaps to straight when close to the chord line, and caps at a semicircle (180°) in either direction. Dragging the handle never affects node positions.
 
 ### Properties panel (right side)
 
 When an edge is selected:
 
-- **Radius** — arc radius in scene units; drives the sustained tone pitch. Drag all the way up to make the edge silent/straight.
+- **Curvature** — arc angle in degrees (0° = straight/silent, 180° = semicircle). Drives the sustained tone pitch.
 - **Frequency** — read-only display of the resulting pitch in Hz.
-- **Length** — arc length in scene units; drives duration. Set to 0 for automatic (derived from geometry).
+- **Duration** — read-only display of the note duration (chord length ÷ 200 px/s).
 - **Bow** — toggle which side the arc curves to.
 
 ### Playback
@@ -85,10 +89,8 @@ meander/
     "start_node_id": str,
     "nodes":   { "<id>": {"id": str, "x": float, "y": float}, ... },
     "edges":   { "<id>": {"id": str, "src": str, "dst": str,
-                           "shape": "straight"|"arc",
-                           "radius": float,        # inf for straight
-                           "arc_side": "left"|"right",
-                           "length": float|None }, ... },
+                           "curvature": float,      # θ ∈ [0, π] radians; 0 = straight
+                           "arc_side": "left"|"right" }, ... },
     "outgoing": { "<node_id>": ["<edge_id>", ...], ... },
 }
 ```
@@ -98,5 +100,6 @@ meander/
 - [PyQt6](https://pypi.org/project/PyQt6/) — UI framework
 - [NumPy](https://numpy.org/) — audio buffer generation
 - [SciPy](https://scipy.org/) — available for future DSP use
+
 - [sounddevice](https://python-sounddevice.readthedocs.io/) — audio output
 
