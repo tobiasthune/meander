@@ -83,16 +83,48 @@ def generate_sustained(freq: float, duration_s: float) -> np.ndarray:
 
 
 def generate_percussive(freq: float) -> np.ndarray:
-    """Damped sinusoid at *freq* Hz.
+    """Tight click/chick hit: bandpass-filtered white noise.
 
-    Returns a float32 mono array of ~0.5 s.  Returns silence if freq == 0.
+    White noise is passed through a Butterworth bandpass filter centred on
+    *freq*, giving a pitched transient with no tonal/sine character.
+    Higher frequencies produce a brighter, thinner hit; lower ones a thicker
+    thud — all with the same noisy, non-tonal texture.
+
+    Returns a float32 mono array of ~0.1 s.  Returns silence if freq == 0.
     """
-    duration_s = 0.5
+    from scipy.signal import butter, sosfilt
+
+    duration_s = 0.10
     n = int(SAMPLE_RATE * duration_s)
     if freq <= 0:
         return np.zeros(n, dtype=np.float32)
 
     t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
-    envelope = np.exp(-PERC_DECAY * t).astype(np.float32) # we could add t* to change attack
-    wave = np.sin(2.0 * np.pi * freq * t).astype(np.float32)
-    return wave * envelope
+
+    # White noise
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal(n)
+
+    # Bandpass filter: one octave wide (freq/√2 … freq×√2), clamped to Nyquist
+    nyq = SAMPLE_RATE / 2.0
+    low  = max(freq / 1.414, 20.0)
+    high = min(freq * 1.414, nyq * 0.95)
+    if low >= high:
+        # Very high freq — use a high-pass instead
+        sos = butter(4, low / nyq, btype="high", output="sos")
+    else:
+        sos = butter(4, [low / nyq, high / nyq], btype="band", output="sos")
+    filtered = sosfilt(sos, noise)
+
+    # Normalise filtered noise (filter gain varies with bandwidth)
+    peak = np.max(np.abs(filtered))
+    if peak > 1e-6:
+        filtered /= peak
+
+    # Envelope: 2 ms linear attack + fast exponential decay
+    attack_samp = int(SAMPLE_RATE * 0.002)
+    env = np.exp(-40.0 * t)
+    env[:attack_samp] *= np.linspace(0.0, 1.0, attack_samp)
+
+    wave = filtered * env
+    return wave.astype(np.float32)

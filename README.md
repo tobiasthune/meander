@@ -6,14 +6,16 @@ Music generation through paths. Curves and angles define sounds.
 Meander is an experimental sound editor where music is described as a directed graph. There are no notes in the traditional sense — the geometry of the graph *is* the composition.
 
 - **Edges are sustained tones.** A circular arc edge plays a sine tone. The arc's *curvature angle* determines pitch (higher curvature = higher frequency), and the straight-line distance between the connected nodes determines duration. A straight edge is silent.
-- **Nodes are percussive hits.** When traversal arrives at a node, the angle between the incoming and outgoing chord directions determines the pitch of a short percussive strike. A straight-through angle (180°) is silent; a sharper turn produces a higher-pitched hit.
+- **Nodes are percussive hits.** When traversal arrives at a node, the angle between the incoming and outgoing chord directions determines the centre frequency of a short noise burst. A straight-through angle (180°) is silent; a sharper turn produces a higher-pitched hit. The hit is bandpass-filtered white noise (one-octave wide around the centre frequency), giving a click/chick texture rather than a tonal sound.
 
 ### Frequency mapping
 
 | Parameter | Sound | Frequency formula |
 |---|---|---|
 | Curvature θ ∈ [0°, 180°] | Sustained tone | `f = 44000 × sin(θ/2) / 100` (semicircle = A4 = 440 Hz) |
-| Turn angle θ | Percussive hit | `f = 4000 × (π − θ) / π` (straight = silent, acute = up to 4 kHz) |
+| Turn angle θ | Percussive hit centre | `f = 4000 × (π − θ) / π` (straight = silent, acute = up to 4 kHz) |
+
+Percussive hits are bandpass-filtered white noise (4th-order Butterworth, ±1 octave around the centre frequency). Lower-frequency hits sound like a muffled thud; higher ones like a sharp hiss or click.
 
 The curvature angle is the angle of the circle segment: 0° = straight line, 180° = semicircle. Because the radius is derived from the curvature and the chord length, moving nodes apart scales the arc shape without changing the pitch.
 
@@ -37,9 +39,11 @@ A green node is fixed at the origin and always acts as the traversal start point
 | Double-click on empty canvas | Create a new node |
 | Drag from the **border** of a node to another node | Create a directed edge (starts straight/silent) |
 | Drag the **red arrow handle** on an edge | Bow the edge into an arc; curvature and pitch update live. The arrow points in the direction of travel. |
+| Left-drag on empty canvas | Pan the canvas |
+| Middle-mouse drag | Pan the canvas (works anywhere) |
+| Scroll wheel | Zoom in / out (slow) |
 | Click a node or edge | Select it |
 | Delete / Backspace | Remove the selected node or edge (start node is protected) |
-| Scroll wheel | Zoom in / out |
 
 The handle snaps to straight when close to the chord line, and caps at a semicircle (180°) in either direction. Dragging the handle never affects node positions.
 
@@ -54,7 +58,7 @@ When an edge is selected:
 
 ### Playback
 
-Press **▶ Play** to compile and play back the graph. Press **⏹ Stop** to interrupt.
+Press **▶ Play** or **Space** to compile and play back the graph. Press **⏹ Stop** or **Space** again to interrupt.
 
 Traversal always starts from the fixed start node, follows the first outgoing edge at each node, and stops at a dead end or if a cycle is detected. Canvas highlights stay in sync with the audio via a global clock.
 

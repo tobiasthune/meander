@@ -352,6 +352,10 @@ class GraphCanvas(QGraphicsView):
         self._drag_src_item: Optional[NodeItem] = None
         self._rubber_band: Optional[RubberBandEdge] = None
 
+        # Pan state (middle-mouse or right-drag on empty canvas)
+        self._panning = False
+        self._pan_start_pos: Optional[QPointF] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -470,6 +474,46 @@ class GraphCanvas(QGraphicsView):
     # Mouse events
     # ------------------------------------------------------------------
 
+    def mousePressEvent(self, event) -> None:
+        # Middle-click anywhere, or left-click on empty canvas → pan
+        is_middle = event.button() == Qt.MouseButton.MiddleButton
+        is_left_on_empty = (
+            event.button() == Qt.MouseButton.LeftButton
+            and not self._scene.items(self.mapToScene(event.pos()))
+        )
+        if is_middle or is_left_on_empty:
+            self._panning = True
+            self._pan_start_pos = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._panning and self._pan_start_pos is not None:
+            delta = event.position() - self._pan_start_pos
+            self._pan_start_pos = event.position()
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - int(delta.x())
+            )
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - int(delta.y())
+            )
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._panning and event.button() in (
+            Qt.MouseButton.MiddleButton, Qt.MouseButton.LeftButton
+        ):
+            self._panning = False
+            self._pan_start_pos = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def mouseDoubleClickEvent(self, event) -> None:
         scene_pos = self.mapToScene(event.pos())
         # Check nothing is under the cursor
@@ -496,7 +540,7 @@ class GraphCanvas(QGraphicsView):
 
     # Zoom with scroll wheel
     def wheelEvent(self, event) -> None:
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        factor = 1.05 if event.angleDelta().y() > 0 else 1 / 1.05
         self.scale(factor, factor)
 
 

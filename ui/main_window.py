@@ -242,6 +242,16 @@ class MainWindow(QMainWindow):
         self._player.stop()
         self._on_playback_finished()
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            if self._player.is_playing():
+                self._on_stop()
+            else:
+                self._on_play()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _on_playback_event(self, kind: str, item_id: str) -> None:
         if kind == "edge":
             self._canvas.highlight_edge(item_id)
