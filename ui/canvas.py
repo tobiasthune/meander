@@ -48,8 +48,6 @@ HANDLE_COLOR = QColor("#e04040")
 
 RUBBER_BAND_COLOR = QColor("#4a90d9")
 
-MIN_ARC_RADIUS = 30.0   # scene units — clamp to prevent degenerate arcs
-
 ARROW_SIZE = 10.0
 
 
@@ -161,6 +159,12 @@ class MidpointHandle(QGraphicsEllipseItem):
                 self.edge_item.handle_moved(self.pos())
         return super().itemChange(change, value)
 
+    def mousePressEvent(self, event) -> None:
+        # Clear the scene selection so no other item (e.g. a selected node) gets
+        # dragged along while curvature is being adjusted.
+        self.scene().clearSelection()
+        super().mousePressEvent(event)
+
 
 # ===========================================================================
 # EdgeItem
@@ -204,7 +208,7 @@ class EdgeItem(QGraphicsPathItem):
 
         path = QPainterPath()
 
-        if edge.shape == "arc" and not math.isinf(edge.radius):
+        if edge.curvature > 0:
             center = edge.arc_center(graph)
             if center is None:
                 _draw_straight(path, src, dst)
@@ -229,7 +233,7 @@ class EdgeItem(QGraphicsPathItem):
 
     # ------------------------------------------------------------------
     def handle_moved(self, handle_pos: QPointF) -> None:
-        """Recompute edge radius from how the handle was dragged."""
+        """Recompute edge curvature (arc angle θ) from how the handle was dragged."""
         edge = self.edge
         graph = self.graph
         src_node = graph.nodes.get(edge.src)
@@ -247,38 +251,24 @@ class EdgeItem(QGraphicsPathItem):
         if chord_len < 2.0:
             return
 
-        # Signed perpendicular distance from handle to the chord LINE.
-        # Used only to determine which side the arc bows to and for snap detection.
+        # Signed sagitta: perpendicular component of (handle - chord_midpoint).
+        # Equivalent to cross / chord_len (distance from handle to chord line).
+        # Negative = handle is visually above the chord = "left" in Qt (y-down).
         cross = chord_x * (hy - sy) - chord_y * (hx - sx)
         sagitta_signed = cross / chord_len
-        # In Qt screen coords (y-down), the cross product is negative when the
-        # handle is visually *above* the chord — but that is the "left" side
-        # (left of the src→dst travel direction). Flip the sign accordingly.
         arc_side = "left" if sagitta_signed < 0 else "right"
 
-        SNAP_THRESHOLD = 10.0  # px — width of dead zone around chord line → straight
-        if abs(sagitta_signed) < SNAP_THRESHOLD:
-            edge.shape = "straight"
-            edge.radius = float("inf")
+        SNAP_THRESHOLD = 10.0  # px — dead zone around chord line → straight
+        s = abs(sagitta_signed)
+        if s < SNAP_THRESHOLD:
+            edge.curvature = 0.0
         else:
-            # Use the circumradius of the triangle (src, handle, dst).
-            # R = (a * b * c) / (4 * area)
-            # This is correct regardless of where the handle sits relative to the
-            # perpendicular bisector, so the radius tracks the handle monotonically
-            # as it moves toward or away from the chord.
-            a = math.hypot(hx - dx, hy - dy)  # handle → dst
-            b = chord_len                       # src → dst
-            c = math.hypot(hx - sx, hy - sy)  # src → handle
-            area = abs(cross) / 2.0            # |cross| = chord_len * |sagitta|
-            if area < 1e-6:
-                edge.shape = "straight"
-                edge.radius = float("inf")
-            else:
-                r = (a * b * c) / (4.0 * area)
-                r = max(r, MIN_ARC_RADIUS)
-                edge.shape = "arc"
-                edge.radius = r
-                edge.arc_side = arc_side
+            # θ = 4·atan(2s/chord)  — exact for a handle at the arc midpoint;
+            # for off-bisector drags s is the projected sagitta, same formula.
+            # Capped at π (semicircle).
+            theta = min(4.0 * math.atan(2.0 * s / chord_len), math.pi)
+            edge.curvature = theta
+            edge.arc_side = arc_side
 
         self.redraw()
         self.canvas.edge_changed.emit(edge.id)
@@ -513,21 +503,34 @@ def _sagitta_point(src: Node, dst: Node, edge: Edge, graph: Graph):
 
     For a circular arc the sagitta point lies on the perpendicular bisector of
     the chord, at distance R from the center, on the same side as the arc.
-    Formula: S = C + R * normalize(M - C)
-    where M is the chord midpoint and C is the arc center.
+    When the center coincides with the chord midpoint (θ = π, semicircle) the
+    direction is the perpendicular to the chord itself.
     """
     mx, my = (src.x + dst.x) / 2.0, (src.y + dst.y) / 2.0
-    if edge.shape == "straight" or math.isinf(edge.radius):
+    if edge.curvature <= 0.0:
         return (mx, my)
     center = edge.arc_center(graph)
     if center is None:
         return (mx, my)
     cx, cy = center
+    r = edge.arc_radius(graph)
     dcx, dcy = mx - cx, my - cy
     dist = math.hypot(dcx, dcy)
     if dist < 1e-6:
-        return (mx, my)
-    r = edge.radius
+        # Center == midpoint (semicircle): step perpendicularly from the chord.
+        chord_x, chord_y = dst.x - src.x, dst.y - src.y
+        chord_len = math.hypot(chord_x, chord_y)
+        if chord_len < 1e-6:
+            return (mx, my)
+        # Perpendicular direction depends on arc_side.
+        # For "left": center was offset in (-uy, ux); sagitta is the opposite: (uy, -ux).
+        # For "right": center was offset in (uy, -ux); sagitta is the opposite: (-uy, ux).
+        ux, uy = chord_x / chord_len, chord_y / chord_len
+        if edge.arc_side == "left":
+            px, py = uy, -ux
+        else:
+            px, py = -uy, ux
+        return (cx + r * px, cy + r * py)
     return (cx + r * dcx / dist, cy + r * dcy / dist)
 
 def _draw_straight(path: QPainterPath, src: Node, dst: Node) -> None:
@@ -578,7 +581,7 @@ def _draw_arc(
         return
 
     cx, cy = center
-    r = edge.radius
+    r = edge.arc_radius(graph)
 
     # Bounding rect of the circle
     rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)

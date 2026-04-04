@@ -27,7 +27,7 @@ import numpy as np
 from audio.synth import (
     SAMPLE_RATE,
     freq_from_angle,
-    freq_from_radius,
+    freq_from_curvature,
     generate_percussive,
     generate_sustained,
 )
@@ -78,8 +78,8 @@ def compile_traversal(graph_dict: dict) -> CompiledPlayback:
                 steps.append((t, "node", current_node_id, perc_samples))
 
         # Sustained tone along this edge
-        edge_duration = max(edge.arc_length(graph) / PIXELS_PER_SECOND, 0.05)
-        sus_freq = freq_from_radius(edge.radius)
+        edge_duration = max(edge.chord_length(graph) / PIXELS_PER_SECOND, 0.05)
+        sus_freq = freq_from_curvature(edge.curvature)
         sus_samples = generate_sustained(sus_freq, edge_duration)
         steps.append((t, "edge", edge.id, sus_samples))
 
@@ -132,8 +132,19 @@ def compile_traversal(graph_dict: dict) -> CompiledPlayback:
 # ---------------------------------------------------------------------------
 
 def _inter_edge_angle(graph: Graph, incoming: Edge, outgoing: Edge) -> float:
-    """Angle between the arriving and departing tangents at a node, in [0, π]."""
-    arr_tx, arr_ty = incoming.tangent_at_dst(graph)
-    dep_tx, dep_ty = outgoing.tangent_at_src(graph)
+    """Angle between the arriving and departing chord directions at a node, in [0, π].
+
+    Uses straight chord directions (not arc tangents), so the percussive pitch
+    reflects only the geometric turn between node positions.
+    """
+    from graph.graph import _chord_vector
+    arr_tx, arr_ty = _chord_vector(
+        graph.nodes[incoming.src].x, graph.nodes[incoming.src].y,
+        graph.nodes[incoming.dst].x, graph.nodes[incoming.dst].y,
+    )
+    dep_tx, dep_ty = _chord_vector(
+        graph.nodes[outgoing.src].x, graph.nodes[outgoing.src].y,
+        graph.nodes[outgoing.dst].x, graph.nodes[outgoing.dst].y,
+    )
     dot = max(-1.0, min(1.0, arr_tx * dep_tx + arr_ty * dep_ty))
     return math.acos(dot)

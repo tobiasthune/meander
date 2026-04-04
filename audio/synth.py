@@ -3,12 +3,13 @@
 Frequency mappings
 ------------------
 Sustained tone (arc edge):
-    f = TUNING_CONSTANT / radius
-    radius = 100 scene-units  →  440 Hz (A4)
-    straight edge (radius → ∞)  →  0 Hz  (silent)
+    f = TUNING_CONSTANT * sin(θ/2) / 100
+    θ = π  (semicircle)  →  440 Hz (A4)
+    θ = 0  (straight)    →  0 Hz  (silent)
+    Frequency depends only on curvature angle θ, not on node distance.
 
 Percussive hit (node):
-    θ ∈ [0, π] is the angle between the incoming and outgoing tangents.
+    Angle between the incoming and outgoing chord directions.
     θ = π  (straight through)  →  silent
     θ → 0  (acute)             →  PERC_MAX_FREQ
     f = PERC_MAX_FREQ * (π - θ) / π
@@ -20,7 +21,7 @@ import math
 import numpy as np
 
 SAMPLE_RATE = 44100          # Hz
-TUNING_CONSTANT = 44000.0    # radius 100 scene-units → 440 Hz
+TUNING_CONSTANT = 44000.0    # at θ=π (semicircle) with reference chord 200px → 440 Hz
 PERC_MAX_FREQ = 4000.0       # Hz at 0° angle
 FADE_SAMPLES = 256           # fade-in/out length for sustained tones
 PERC_DECAY = 8.0             # decay exponent for percussive envelope
@@ -30,14 +31,18 @@ PERC_DECAY = 8.0             # decay exponent for percussive envelope
 # Frequency mapping
 # ---------------------------------------------------------------------------
 
-def freq_from_radius(radius: float) -> float:
-    """Map arc radius (scene units) to frequency (Hz).
+def freq_from_curvature(curvature: float) -> float:
+    """Map arc curvature angle θ ∈ [0, π] (radians) to frequency (Hz).
 
-    Returns 0.0 for straight edges (infinite radius).
+    f = TUNING_CONSTANT * sin(θ/2) / 100
+    θ = 0   (straight)   → 0 Hz  (silent)
+    θ = π   (semicircle) → 440 Hz (A4)
+    Frequency is independent of node distance.
     """
-    if math.isinf(radius) or radius <= 0:
+    if curvature <= 0.0:
         return 0.0
-    return TUNING_CONSTANT / radius
+    theta = min(curvature, math.pi)
+    return TUNING_CONSTANT * math.sin(theta / 2.0) / 100.0
 
 
 def freq_from_angle(angle_rad: float) -> float:

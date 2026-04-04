@@ -10,13 +10,11 @@ Dict schema
     },
     "edges": {
         "<id>": {
-            "id":       str,
-            "src":      str,
-            "dst":      str,
-            "shape":    "straight" | "arc",
-            "radius":   float,         # float("inf") for straight
-            "arc_side": "left" | "right",
-            "length":   float | None,  # None = auto from geometry
+            "id":         str,
+            "src":        str,
+            "dst":        str,
+            "curvature":  float,   # θ ∈ [0, π]; 0 = straight, π = semicircle
+            "arc_side":   "left" | "right",
         },
         ...
     },
@@ -40,13 +38,11 @@ def to_dict(graph: Graph) -> dict:
         },
         "edges": {
             eid: {
-                "id":       eid,
-                "src":      e.src,
-                "dst":      e.dst,
-                "shape":    e.shape,
-                "radius":   e.radius,
-                "arc_side": e.arc_side,
-                "length":   e._length_override,
+                "id":        eid,
+                "src":       e.src,
+                "dst":       e.dst,
+                "curvature": e.curvature,
+                "arc_side":  e.arc_side,
             }
             for eid, e in graph.edges.items()
         },
@@ -81,10 +77,8 @@ def from_dict(d: dict) -> Graph:
             id=ed["id"],
             src=ed["src"],
             dst=ed["dst"],
-            shape=ed["shape"],
-            radius=ed["radius"],
+            curvature=ed["curvature"],
             arc_side=ed["arc_side"],
-            _length_override=ed["length"],
         )
         g.edges[e.id] = e
         g._outgoing.setdefault(e.src, [])

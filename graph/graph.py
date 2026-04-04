@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 
@@ -24,49 +24,37 @@ class Node:
 class Edge:
     """A directed edge from src to dst.
 
-    shape:
-        'straight'  – infinite radius, silent
-        'arc'       – circular arc; radius controls frequency
+    curvature:
+        Arc angle θ ∈ [0, π] (radians).
+        0  → straight line (silent).
+        π  → semicircle (maximum curvature, highest frequency).
+        The arc radius is derived as chord / (2·sin(θ/2)) so that the shape
+        scales with node distance while the curvature (and frequency) stay fixed.
 
     arc_side:
         'left'  – arc bows to the left of the src→dst direction
         'right' – arc bows to the right
-
-    length:
-        Geometric arc length (radius × subtended_angle) in scene units.
-        For straight edges this is the Euclidean chord length.
-
-    radius:
-        Arc radius in scene units. float('inf') means straight.
-        Frequency = TUNING_CONSTANT / radius  (see audio/synth.py).
     """
 
     id: str
     src: str  # node id
     dst: str  # node id
-    shape: str = "straight"  # 'straight' | 'arc'
-    radius: float = float("inf")
-    arc_side: str = "left"  # 'left' | 'right'
-    # length is derived from geometry when None; can be overridden
-    _length_override: Optional[float] = field(default=None, repr=False)
+    curvature: float = 0.0   # θ ∈ [0, π]; 0 = straight, π = semicircle
+    arc_side: str = "left"   # 'left' | 'right'
 
     @staticmethod
     def new(
         src: str,
         dst: str,
-        shape: str = "straight",
-        radius: float = float("inf"),
+        curvature: float = 0.0,
         arc_side: str = "left",
-        length: Optional[float] = None,
     ) -> "Edge":
         return Edge(
             id=str(uuid.uuid4()),
             src=src,
             dst=dst,
-            shape=shape,
-            radius=radius,
+            curvature=curvature,
             arc_side=arc_side,
-            _length_override=length,
         )
 
     # ------------------------------------------------------------------
@@ -81,54 +69,50 @@ class Edge:
         dy = dst_node.y - src_node.y
         return math.hypot(dx, dy)
 
-    def subtended_half_angle(self, graph: "Graph") -> float:
-        """Half-angle α such that chord = 2*r*sin(α).  Returns 0 for straight."""
-        if self.shape == "straight" or math.isinf(self.radius):
-            return 0.0
+    def arc_radius(self, graph: "Graph") -> float:
+        """Circular arc radius derived from curvature and current chord length.
+
+        Returns float('inf') for straight edges (curvature == 0).
+        Scales automatically so the arc angle is preserved when nodes move.
+        """
+        if self.curvature <= 0.0:
+            return float("inf")
         c = self.chord_length(graph)
-        # clamp to avoid domain errors from rounding
-        ratio = min(c / (2.0 * self.radius), 1.0)
-        return math.asin(ratio)
-
-    def arc_length(self, graph: "Graph") -> float:
-        """Geometric arc length: r * 2α  (or chord for straight)."""
-        if self._length_override is not None:
-            return self._length_override
-        if self.shape == "straight" or math.isinf(self.radius):
-            return self.chord_length(graph)
-        alpha = self.subtended_half_angle(graph)
-        return self.radius * 2.0 * alpha
-
-    def set_length(self, value: Optional[float]) -> None:
-        self._length_override = value
+        if c < 1e-6:
+            return float("inf")
+        return c / (2.0 * math.sin(self.curvature / 2.0))
 
     # ------------------------------------------------------------------
     # Tangent directions (unit vectors) at src and dst endpoints
-    # Used by the traversal engine to compute inter-edge angles.
+    # Used only for drawing arrowheads; audio uses chord directions.
     # ------------------------------------------------------------------
 
     def tangent_at_src(self, graph: "Graph") -> Tuple[float, float]:
-        """Unit tangent vector pointing away from src toward dst."""
+        """Unit tangent vector pointing away from src toward dst along the arc."""
         src_node = graph.nodes[self.src]
         dst_node = graph.nodes[self.dst]
+        r = self.arc_radius(graph)
+        shape = "arc" if self.curvature > 0.0 else "straight"
         return _arc_tangent_at_start(
             src_node.x, src_node.y,
             dst_node.x, dst_node.y,
-            self.radius,
+            r,
             self.arc_side,
-            self.shape,
+            shape,
         )
 
     def tangent_at_dst(self, graph: "Graph") -> Tuple[float, float]:
-        """Unit tangent vector pointing *into* dst (arriving direction)."""
+        """Unit tangent vector pointing *into* dst along the arc."""
         src_node = graph.nodes[self.src]
         dst_node = graph.nodes[self.dst]
+        r = self.arc_radius(graph)
+        shape = "arc" if self.curvature > 0.0 else "straight"
         return _arc_tangent_at_end(
             src_node.x, src_node.y,
             dst_node.x, dst_node.y,
-            self.radius,
+            r,
             self.arc_side,
-            self.shape,
+            shape,
         )
 
     # ------------------------------------------------------------------
@@ -137,14 +121,17 @@ class Edge:
 
     def arc_center(self, graph: "Graph") -> Optional[Tuple[float, float]]:
         """Returns the center of the arc circle, or None for straight edges."""
-        if self.shape == "straight" or math.isinf(self.radius):
+        if self.curvature <= 0.0:
             return None
         src_node = graph.nodes[self.src]
         dst_node = graph.nodes[self.dst]
+        r = self.arc_radius(graph)
+        if math.isinf(r):
+            return None
         return _arc_center(
             src_node.x, src_node.y,
             dst_node.x, dst_node.y,
-            self.radius,
+            r,
             self.arc_side,
         )
 

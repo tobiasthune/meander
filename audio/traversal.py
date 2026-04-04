@@ -20,7 +20,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from audio.player import AudioPlayer
 from audio.synth import (
     freq_from_angle,
-    freq_from_radius,
+    freq_from_curvature,
     generate_percussive,
     generate_sustained,
 )
@@ -84,9 +84,8 @@ class Traverser(QThread):
             # --- Sustained tone along edge ------------------------------
             self.edge_started.emit(edge.id)
 
-            edge_radius = edge.radius
-            sus_freq = freq_from_radius(edge_radius)
-            duration_s = edge.arc_length(self._graph) / PIXELS_PER_SECOND
+            sus_freq = freq_from_curvature(edge.curvature)
+            duration_s = edge.chord_length(self._graph) / PIXELS_PER_SECOND
             duration_s = max(duration_s, 0.05)  # minimum 50 ms
 
             sus = generate_sustained(sus_freq, duration_s)
@@ -108,18 +107,20 @@ class Traverser(QThread):
 # ---------------------------------------------------------------------------
 
 def _inter_edge_angle(graph: Graph, incoming: Edge, outgoing: Edge) -> float:
-    """Angle at a node between the arriving and departing edges.
+    """Angle at a node between the arriving and departing chord directions.
 
     Returns a value in [0, π]:
         π  = straight through (no bend)
         0  = completely reversed (hairpin)
     """
-    # Tangent arriving into the node (direction of travel)
-    arr_tx, arr_ty = incoming.tangent_at_dst(graph)
-    # Tangent departing from the node
-    dep_tx, dep_ty = outgoing.tangent_at_src(graph)
-
-    # Dot product of the two unit vectors
-    dot = arr_tx * dep_tx + arr_ty * dep_ty
-    dot = max(-1.0, min(1.0, dot))  # clamp for acos safety
+    from graph.graph import _chord_vector
+    arr_tx, arr_ty = _chord_vector(
+        graph.nodes[incoming.src].x, graph.nodes[incoming.src].y,
+        graph.nodes[incoming.dst].x, graph.nodes[incoming.dst].y,
+    )
+    dep_tx, dep_ty = _chord_vector(
+        graph.nodes[outgoing.src].x, graph.nodes[outgoing.src].y,
+        graph.nodes[outgoing.dst].x, graph.nodes[outgoing.dst].y,
+    )
+    dot = max(-1.0, min(1.0, arr_tx * dep_tx + arr_ty * dep_ty))
     return math.acos(dot)

@@ -96,31 +96,25 @@ class MainWindow(QMainWindow):
         self._prop_label = QLabel("Nothing selected")
         layout.addRow(self._prop_label)
 
-        # Edge radius
-        self._radius_spin = QDoubleSpinBox()
-        self._radius_spin.setRange(MIN_ARC_RADIUS_UI, 5000.0)
-        self._radius_spin.setSingleStep(10.0)
-        self._radius_spin.setDecimals(1)
-        self._radius_spin.setSuffix(" px")
-        self._radius_spin.setToolTip("Arc radius in scene units (smaller = higher pitch)")
-        self._radius_spin.valueChanged.connect(self._on_radius_changed)
-        layout.addRow("Radius:", self._radius_spin)
+        # Edge curvature (arc angle in degrees: 0 = straight, 180 = semicircle)
+        self._curvature_spin = QDoubleSpinBox()
+        self._curvature_spin.setRange(0.0, 180.0)
+        self._curvature_spin.setSingleStep(5.0)
+        self._curvature_spin.setDecimals(1)
+        self._curvature_spin.setSuffix("°")
+        self._curvature_spin.setToolTip(
+            "Arc angle: 0° = straight (silent), 180° = semicircle (440 Hz)"
+        )
+        self._curvature_spin.valueChanged.connect(self._on_curvature_changed)
+        layout.addRow("Curvature:", self._curvature_spin)
 
         # Frequency display (read-only)
         self._freq_label = QLabel("—")
         layout.addRow("Frequency:", self._freq_label)
 
-        # Length override (None = auto)
-        self._length_spin = QDoubleSpinBox()
-        self._length_spin.setRange(1.0, 10000.0)
-        self._length_spin.setSingleStep(10.0)
-        self._length_spin.setDecimals(1)
-        self._length_spin.setSuffix(" px")
-        self._length_spin.setToolTip("Arc length (controls duration). 0 = auto from geometry")
-        self._length_spin.setSpecialValueText("auto")
-        self._length_spin.setMinimum(0.0)
-        self._length_spin.valueChanged.connect(self._on_length_changed)
-        layout.addRow("Length:", self._length_spin)
+        # Duration display (read-only, from chord / PIXELS_PER_SECOND)
+        self._duration_label = QLabel("—")
+        layout.addRow("Duration:", self._duration_label)
 
         # Arc side toggle
         self._arc_side_btn = QPushButton("Bow: Left")
@@ -139,8 +133,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
     def _set_properties_enabled(self, enabled: bool) -> None:
-        self._radius_spin.setEnabled(enabled)
-        self._length_spin.setEnabled(enabled)
+        self._curvature_spin.setEnabled(enabled)
         self._arc_side_btn.setEnabled(enabled)
 
     # ==================================================================
@@ -165,31 +158,28 @@ class MainWindow(QMainWindow):
         self._prop_label.setText("Edge selected")
         self._set_properties_enabled(True)
 
-        # Temporarily block signals to avoid feedback loops
-        self._radius_spin.blockSignals(True)
-        self._length_spin.blockSignals(True)
+        self._curvature_spin.blockSignals(True)
         self._arc_side_btn.blockSignals(True)
 
-        if math.isinf(edge.radius):
-            self._radius_spin.setValue(self._radius_spin.maximum())
+        deg = math.degrees(edge.curvature)
+        self._curvature_spin.setValue(deg)
+
+        if edge.curvature <= 0.0:
             self._freq_label.setText("silent (straight)")
         else:
-            self._radius_spin.setValue(edge.radius)
-            from audio.synth import freq_from_radius
-            freq = freq_from_radius(edge.radius)
+            from audio.synth import freq_from_curvature
+            freq = freq_from_curvature(edge.curvature)
             self._freq_label.setText(f"{freq:.1f} Hz")
 
-        if edge._length_override is not None:
-            self._length_spin.setValue(edge._length_override)
-        else:
-            self._length_spin.setValue(0.0)  # "auto"
+        from audio.compiler import PIXELS_PER_SECOND
+        chord = edge.chord_length(self._graph)
+        self._duration_label.setText(f"{chord / PIXELS_PER_SECOND:.2f} s")
 
         side = edge.arc_side
         self._arc_side_btn.setText(f"Bow: {'Left' if side == 'left' else 'Right'}")
         self._arc_side_btn.setChecked(side == "right")
 
-        self._radius_spin.blockSignals(False)
-        self._length_spin.blockSignals(False)
+        self._curvature_spin.blockSignals(False)
         self._arc_side_btn.blockSignals(False)
 
     def _on_node_selected(self, node_id: str) -> None:
@@ -198,35 +188,29 @@ class MainWindow(QMainWindow):
         self._prop_label.setText("Node selected")
         self._set_properties_enabled(False)
         self._freq_label.setText("—")
+        self._duration_label.setText("—")
 
-    def _on_radius_changed(self, value: float) -> None:
+    def _on_curvature_changed(self, value_deg: float) -> None:
         if self._selected_edge_id is None:
             return
         edge = self._graph.edges.get(self._selected_edge_id)
         if edge is None:
             return
-        if value >= self._radius_spin.maximum() - 1:
-            edge.shape = "straight"
-            edge.radius = float("inf")
+        theta = math.radians(value_deg)
+        edge.curvature = min(theta, math.pi)
+        if edge.curvature <= 0.0:
             self._freq_label.setText("silent (straight)")
         else:
-            edge.shape = "arc"
-            edge.radius = value
-            from audio.synth import freq_from_radius
-            freq = freq_from_radius(value)
+            from audio.synth import freq_from_curvature
+            freq = freq_from_curvature(edge.curvature)
             self._freq_label.setText(f"{freq:.1f} Hz")
-        # Redraw the edge item
         item = self._canvas._edge_items.get(self._selected_edge_id)
         if item:
             item.redraw()
 
     def _on_length_changed(self, value: float) -> None:
-        if self._selected_edge_id is None:
-            return
-        edge = self._graph.edges.get(self._selected_edge_id)
-        if edge is None:
-            return
-        edge.set_length(None if value == 0.0 else value)
+        # Removed: duration is now always chord / PIXELS_PER_SECOND
+        pass
 
     def _on_arc_side_toggled(self, checked: bool) -> None:
         if self._selected_edge_id is None:
@@ -269,5 +253,3 @@ class MainWindow(QMainWindow):
         self._stop_btn.setEnabled(False)
         self._canvas.clear_highlights()
 
-
-MIN_ARC_RADIUS_UI = 30.0
